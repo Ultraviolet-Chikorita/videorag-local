@@ -1,0 +1,6 @@
+faster-whisper>=1.0.3
+
+[vision]
+pillow>=10
+torch>=2.2
+transformers>=4.45

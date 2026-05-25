@@ -1,0 +1,80 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Local Video RAG</title>
+    <link rel="stylesheet" href="/assets/app.css">
+  </head>
+  <body>
+    <div class="scan-grid" aria-hidden="true"></div>
+
+    <main class="workspace">
+      <section class="chat-panel panel">
+        <div class="panel-strip">
+          <div class="title-area">
+            <h1>Local Video RAG</h1>
+            <p>Local grounded answers</p>
+          </div>
+          <div class="system-status" aria-live="polite">
+            <span class="status-light" id="statusLight"></span>
+            <div>
+              <strong id="statusText">CONNECTING</strong>
+              <span id="statsText">Checking evidence index</span>
+            </div>
+          </div>
+        </div>
+
+        <div class="messages" id="messages" aria-live="polite">
+          <article class="message assistant">
+            <span class="speaker">ASSISTANT</span>
+            <p>Ask a question across your indexed videos. Source clips appear on the right.</p>
+          </article>
+        </div>
+
+        <form class="composer" id="chatForm">
+          <label class="sr-only" for="question">Question</label>
+          <textarea id="question" rows="2" maxlength="4000" placeholder="Ask about concepts across the indexed videos..." required></textarea>
+          <div class="composer-toolbar">
+            <span class="lock-pill">LOCAL ANSWER | 8 CLIPS</span>
+            <button class="send" id="sendButton" type="submit">SEND</button>
+          </div>
+        </form>
+      </section>
+
+      <aside class="evidence-panel panel">
+        <div class="panel-strip">
+          <div class="title-area">
+            <h2>Source Clips</h2>
+            <p>Timestamped evidence</p>
+          </div>
+          <span class="source-count" id="sourceCount">00</span>
+        </div>
+
+        <section class="clip-monitor" id="clipMonitor">
+          <div class="monitor-placeholder" id="monitorPlaceholder">
+            <p>Select a retrieved clip to review local evidence.</p>
+          </div>
+          <div class="monitor-active hidden" id="monitorActive">
+            <video id="clipPlayer" controls preload="metadata"></video>
+            <div class="playing-meta">
+              <span id="playingLabel" class="source-label">S1</span>
+              <div>
+                <h3 id="playingTitle"></h3>
+                <p id="playingTimestamp"></p>
+              </div>
+              <button type="button" class="play-source" id="playClip">PLAY</button>
+            </div>
+            <p class="clip-transcript" id="playingTranscript"></p>
+          </div>
+        </section>
+
+        <div class="sources" id="sources">
+          <p class="empty-sources">Evidence cards appear here after a query.</p>
+        </div>
+      </aside>
+    </main>
+
+    <script src="/assets/app.js"></script>
+  </body>
+</html>
