@@ -19,11 +19,9 @@ The design priorities are:
 - **local execution** - transcription, embeddings, vision captioning, and answer generation can all run without a hosted model API;
 - **inspectability** - retrieval reasons are kept separately from generated answers.
 
-## Reviewer guide
+## Key components
 
-If you are reading this repository as a coding sample, the most representative files are:
-
-| File | What to inspect |
+| File | Responsibility |
 | --- | --- |
 | [`src/longvideo_rag/retrieval.py`](src/longvideo_rag/retrieval.py) | multi-channel ranking, temporal/cross-video expansion, and retrieval provenance |
 | [`src/longvideo_rag/store.py`](src/longvideo_rag/store.py) | persistent evidence/index model and query surface |
