@@ -1,2 +1,0 @@
-[console_scripts]
-longvideo-rag = longvideo_rag.cli:main
