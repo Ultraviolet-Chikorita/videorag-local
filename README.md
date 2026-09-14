@@ -1,294 +1,196 @@
 # LongVideo RAG
 
-Local multimodal question answering across full videos. This Python app transcribes video
-segments locally, samples frames, retrieves by transcript and CLIP visual similarity, stores
-precomputed vision captions, and answers questions through Ollama with timestamped source clips
-shown beside the chat.
+A local-first multimodal retrieval and question-answering system for long-form video.
 
-The current demo indexes three full videos from 3Blue1Brown's *Essence of Linear Algebra*:
-Chapters 1-3 (`43` timestamped segments). The web interface always generates a local answer and
-shows `8` supporting clips.
+LongVideo RAG turns full videos into a persistent evidence index containing timestamped transcripts, sampled frames, visual captions, and CLIP embeddings. Queries are answered from retrieved evidence and returned with playable source clips rather than as uncited model output.
 
-## What It Does
+> **Project status:** working research/engineering prototype. The core indexing, retrieval, QA, CLI, and web paths are implemented and covered by local tests. It is not a complete reproduction of the VideoRAG paper: in particular, it does not implement the paper's full LLM-built knowledge graph or upstream reranking pipeline.
 
-- Transcribes local video files with `faster-whisper`.
-- Extracts audio and sampled frames with `ffmpeg`/`ffprobe`.
-- Generates segment-level visual captions with a local Ollama vision model.
-- Embeds sampled frames with CLIP for text-to-visual retrieval.
-- Retrieves transcript and visual evidence across multiple videos with temporal and cross-video
-  expansion.
-- Generates cited answers with a local Ollama language model.
-- Serves a dark, compact chat UI with playable timestamped source clips.
+## Why this project exists
 
-This is an improved practical multi-video implementation of the multimodal retrieval channel
-described by VideoRAG. It does not implement the paper's complete LLM-built knowledge graph or
-full upstream retrieval/reranking pipeline.
+Long videos create a retrieval problem that plain transcript RAG handles badly: some questions are answered by spoken text, some by diagrams or frames, and useful evidence often spans neighboring segments or multiple videos. This project explores a simple local architecture for combining those channels while preserving enough provenance to show a user where an answer came from.
 
-## Pipeline
+The design priorities are:
+
+- **evidence first** - every retrieved item carries source-video and timestamp provenance;
+- **multiple retrieval channels** - transcript/lexical evidence and visual similarity can contribute independently;
+- **temporal context** - strong hits can expand to neighboring segments rather than being treated as isolated chunks;
+- **cross-video retrieval** - a collection can be searched as one evidence space;
+- **local execution** - transcription, embeddings, vision captioning, and answer generation can all run without a hosted model API;
+- **inspectability** - retrieval reasons are kept separately from generated answers.
+
+## Reviewer guide
+
+If you are reading this repository as a coding sample, the most representative files are:
+
+| File | What to inspect |
+| --- | --- |
+| [`src/longvideo_rag/retrieval.py`](src/longvideo_rag/retrieval.py) | multi-channel ranking, temporal/cross-video expansion, and retrieval provenance |
+| [`src/longvideo_rag/store.py`](src/longvideo_rag/store.py) | persistent evidence/index model and query surface |
+| [`src/longvideo_rag/extraction.py`](src/longvideo_rag/extraction.py) | segmentation and media-processing pipeline |
+| [`src/longvideo_rag/providers.py`](src/longvideo_rag/providers.py) | model/provider boundaries for local transcription, vision, and embeddings |
+| [`src/longvideo_rag/qa.py`](src/longvideo_rag/qa.py) | evidence-grounded answer construction |
+| [`tests/test_retrieval.py`](tests/test_retrieval.py) | retrieval behavior and ranking invariants |
+| [`tests/test_extraction.py`](tests/test_extraction.py) | local media fixtures and extraction behavior |
+| [`tests/test_qa.py`](tests/test_qa.py) | answer/evidence behavior |
+| [`tests/test_web.py`](tests/test_web.py) | application routes and serving path |
+
+## Architecture
 
 ```mermaid
 flowchart LR
-    A["Full local videos"] --> B["ffmpeg segment extraction"]
-    B --> C["faster-whisper transcripts"]
-    B --> D["Sampled frames"]
-    D --> E["Granite visual captions"]
-    D --> F["CLIP visual embeddings"]
-    C --> G["SQLite evidence index"]
+    A[Full videos] --> B[ffmpeg / ffprobe]
+    B --> C[faster-whisper transcripts]
+    B --> D[Sampled frames]
+    D --> E[Vision captions]
+    D --> F[CLIP embeddings]
+    C --> G[(SQLite evidence index)]
     E --> G
     F --> G
-    Q["User question"] --> H["Text + visual retriever"]
+    Q[Question] --> H[Text + visual retrieval]
     G --> H
-    H --> I["Ollama answer with citations"]
-    I --> J["Chat UI + 8 source clips"]
+    H --> I[Temporal and cross-video expansion]
+    I --> J[Local answer generation]
+    J --> K[Answer + timestamped source clips]
 ```
 
-## Quickstart
+The persisted unit is a timestamped video segment. A segment can carry transcript text, visual description, frame paths, visual embeddings, collection/video metadata, and extraction provenance. The retrieval layer combines independent evidence channels rather than collapsing them at ingestion time.
 
-These steps build the current three-full-video multimodal app from scratch on Windows
-PowerShell.
+## Current demo
 
-### 1. Prerequisites
+The repository has been exercised on three full videos from 3Blue1Brown's *Essence of Linear Algebra* (chapters 1-3), producing 43 timestamped segments with transcript and visual evidence. That dataset is an example workload rather than a requirement of the system.
 
-Install:
+## Quick start
 
-- Python `3.11+`
-- [FFmpeg](https://ffmpeg.org/) with `ffmpeg` and `ffprobe` on `PATH`
-- [Ollama](https://ollama.com/) running locally
+### Prerequisites
 
-Verify:
+- Python 3.11+
+- `ffmpeg` and `ffprobe` on `PATH`
+- Ollama for the local generation/vision demo paths
 
-```powershell
-py -3.11 --version
-ffmpeg -version
-ffprobe -version
-ollama --version
+```bash
+python -m venv .venv
+# Windows: .venv\Scripts\activate
+# Unix/macOS: source .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e ".[vision]"
 ```
 
-### 2. Create The Environment
+For the example-video download workflow, also install the demo extra:
 
-```powershell
-cd C:\videoRAG
-py -3.11 -m venv .venv
-.\.venv\Scripts\python.exe -m pip install --upgrade pip
-.\.venv\Scripts\python.exe -m pip install -r .\requirements.txt
-.\.venv\Scripts\python.exe -m pip install -e .
+```bash
+python -m pip install -e ".[vision,demo]"
 ```
 
-The requirements include Pillow, Torch, and Transformers for frame handling and CLIP
-retrieval, plus `yt-dlp` for the example downloads. Whisper and CLIP models are downloaded on
-first use unless local model paths are provided.
+Example local models used during development:
 
-### 3. Pull Local Models
-
-```powershell
+```bash
 ollama pull qwen2.5:3b
 ollama pull granite3.2-vision:2b
 ```
 
-- `qwen2.5:3b` generates grounded chat answers.
-- `granite3.2-vision:2b` precomputes higher-quality captions for educational diagrams.
+### Index videos
 
-Granite caption generation is slow on CPU-only machines. The caption step below checkpoints
-after each segment and can be resumed safely.
-
-### 4. Download Three Full Videos
-
-```powershell
-New-Item -ItemType Directory -Force .\.longvideo\three_video_videos | Out-Null
-
-.\.venv\Scripts\yt-dlp.exe --merge-output-format mp4 --remux-video mp4 `
-  -o ".\.longvideo\three_video_videos\chapter-01.%(ext)s" `
-  "https://www.youtube.com/watch?v=fNk_zzaMoSs"
-.\.venv\Scripts\yt-dlp.exe --merge-output-format mp4 --remux-video mp4 `
-  -o ".\.longvideo\three_video_videos\chapter-02.%(ext)s" `
-  "https://www.youtube.com/watch?v=k7RM-ot2NWY"
-.\.venv\Scripts\yt-dlp.exe --merge-output-format mp4 --remux-video mp4 `
-  -o ".\.longvideo\three_video_videos\chapter-03.%(ext)s" `
-  "https://www.youtube.com/watch?v=kYB8IZa5AuE"
+```bash
+longvideo-rag --db .longvideo/index.sqlite3 index-videos \
+  videos/lesson-01.mp4 videos/lesson-02.mp4 \
+  --collection-title "Example Course" \
+  --video-facet "course=Example Course" \
+  --segment-seconds 45 \
+  --language en \
+  --whisper-model base.en \
+  --frames-per-segment 2 \
+  --visual-embedding-model openai/clip-vit-base-patch32 \
+  --artifacts-dir .longvideo/artifacts \
+  --output .longvideo/manifest.json
 ```
 
+### Optionally enrich segments with visual captions
 
-### 5. Transcribe And Build Visual Embeddings
-
-This creates timestamped segments, local transcripts, sampled frames, and CLIP embeddings. It
-does not wait for expensive vision captions.
-
-```powershell
-$videos = @(
-  ".\.longvideo\three_video_videos\chapter-01.mp4"
-  ".\.longvideo\three_video_videos\chapter-02.mp4"
-  ".\.longvideo\three_video_videos\chapter-03.mp4"
-)
-
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\three_video_index.sqlite3 index-videos @videos `
-  --collection-id 3b1b-linear-algebra-chapters-1-3 `
-  --collection-title "Essence of Linear Algebra - Chapters 1-3" `
-  --collection-facet "publisher=3Blue1Brown" `
-  --video-facet "course=Essence of Linear Algebra" `
-  --segment-seconds 45 `
-  --language en `
-  --whisper-model base.en `
-  --whisper-device cpu `
-  --whisper-compute-type int8 `
-  --frames-per-segment 2 `
-  --visual-embedding-model openai/clip-vit-base-patch32 `
-  --vision-device cpu `
-  --artifacts-dir .\.longvideo\three_video_artifacts `
-  --output .\.longvideo\three_video_multimodal_manifest.json
-```
-
-You can launch the app after this step: transcripts and visual similarity are already indexed.
-
-### 6. Precompute Granite Vision Captions
-
-Enrich the existing manifest without retranscribing or rebuilding CLIP embeddings:
-
-```powershell
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\three_video_index.sqlite3 enrich-visual `
-  .\.longvideo\three_video_multimodal_manifest.json `
-  --segment-seconds 45 `
-  --frames-per-segment 2 `
-  --vision-model granite3.2-vision:2b `
-  --artifacts-dir .\.longvideo\three_video_artifacts `
-  --output .\.longvideo\three_video_multimodal_manifest.json `
-  --checkpoint `
-  --skip-existing-captions `
+```bash
+longvideo-rag --db .longvideo/index.sqlite3 enrich-visual \
+  .longvideo/manifest.json \
+  --frames-per-segment 2 \
+  --vision-model granite3.2-vision:2b \
+  --artifacts-dir .longvideo/artifacts \
+  --output .longvideo/manifest.json \
+  --checkpoint \
+  --skip-existing-captions \
   --ingest
 ```
 
-`--checkpoint` saves after every segment. `--skip-existing-captions` resumes only captions
-already produced successfully by the same vision model, so changing the model regenerates
-captions instead of silently mixing providers.
+Checkpointing makes long captioning runs resumable. Existing captions are only reused when they were produced by the same configured vision model, avoiding silent mixing of providers.
 
-On the current local run, this produced Granite captions for all `43/43` segments. Confirm the
-indexed segment totals and the manifest caption count:
+### Search or ask
 
-```powershell
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\three_video_index.sqlite3 stats
-
-@'
-import json
-from pathlib import Path
-
-data = json.loads(Path(r".longvideo\three_video_multimodal_manifest.json").read_text())
-segments = [segment for video in data["videos"] for segment in video["segments"]]
-captioned = sum(bool(segment.get("visual_caption", "").strip()) for segment in segments)
-print(f"{captioned}/{len(segments)} captions")
-'@ | .\.venv\Scripts\python.exe -
-```
-
-### 7. Start The Chat App
-
-Use precomputed captions and CLIP retrieval at query time. Do not add `--vision-model` here
-unless you deliberately want slow, question-specific recaptioning of retrieved clips.
-
-```powershell
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\three_video_index.sqlite3 serve `
-  --host 127.0.0.1 `
-  --port 8787 `
-  --model qwen2.5:3b `
-  --facet "course=Essence of Linear Algebra" `
-  --visual-embedding-model openai/clip-vit-base-patch32 `
-  --vision-device cpu
-```
-
-Open [http://127.0.0.1:8787](http://127.0.0.1:8787).
-
-The current interface displays:
-
-- Local chat answers generated by `qwen2.5:3b`.
-- Exactly `8` retrieved source clips for each answer.
-- Playable video evidence with timestamps, transcript excerpts, and visual captions.
-- Status for the active index, currently `3 videos | 43 clips | 43 visual`.
-
-## CLI Usage
-
-### Search Evidence
-
-```powershell
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\three_video_index.sqlite3 search `
-  "Which visual demonstrates a linear transformation?" `
-  --facet "course=Essence of Linear Algebra" `
-  --visual-embedding-model openai/clip-vit-base-patch32 `
+```bash
+longvideo-rag --db .longvideo/index.sqlite3 search \
+  "Which visual demonstrates a linear transformation?" \
+  --visual-embedding-model openai/clip-vit-base-patch32 \
   --top-k 8
-```
 
-### Ask Locally With Evidence
-
-```powershell
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\three_video_index.sqlite3 ask `
-  "How does the interpretation of vectors develop into linear transformations?" `
-  --model qwen2.5:3b `
-  --facet "course=Essence of Linear Algebra" `
-  --visual-embedding-model openai/clip-vit-base-patch32 `
-  --top-k 8 `
+longvideo-rag --db .longvideo/index.sqlite3 ask \
+  "How does the interpretation of vectors develop into linear transformations?" \
+  --model qwen2.5:3b \
+  --visual-embedding-model openai/clip-vit-base-patch32 \
+  --top-k 8 \
   --show-evidence
 ```
 
-### Index Your Own Videos
+### Serve the web app
 
-```powershell
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\my_videos.sqlite3 index-videos `
-  .\videos\lesson-01.mp4 .\videos\lesson-02.mp4 `
-  --collection-title "My Course" `
-  --video-facet "course=My Course" `
-  --segment-seconds 45 `
-  --language en `
-  --whisper-model base.en `
-  --frames-per-segment 2 `
-  --visual-embedding-model openai/clip-vit-base-patch32 `
-  --artifacts-dir .\.longvideo\my_video_artifacts `
-  --output .\.longvideo\my_video_manifest.json
+```bash
+longvideo-rag --db .longvideo/index.sqlite3 serve \
+  --host 127.0.0.1 \
+  --port 8787 \
+  --model qwen2.5:3b \
+  --visual-embedding-model openai/clip-vit-base-patch32
 ```
 
-Then use `enrich-visual` and `serve` as shown in the quickstart, substituting your database,
-manifest, artifacts directory, and facet.
+The web path returns the generated answer together with playable source clips, timestamps, transcript excerpts, and available visual captions.
 
-## Data Model
+## Repository structure
 
-The persisted JSON manifest contains collections, complete source videos, and timestamped
-segments:
+```text
+src/longvideo_rag/
+  cli.py          command-line entry points
+  extraction.py   transcription / frame extraction pipeline
+  ingest.py       manifest ingestion
+  media.py        ffmpeg/ffprobe helpers
+  models.py       data models
+  providers.py    local model/provider adapters
+  qa.py           evidence-grounded answer path
+  retrieval.py    retrieval and expansion logic
+  store.py        SQLite-backed evidence store
+  web.py          local web application
+  web_static/     browser UI assets
 
-```json
-{
-  "collection": {"id": "course", "title": "Course"},
-  "videos": [
-    {
-      "external_id": "lesson-01",
-      "title": "Lesson 1",
-      "source_uri": "videos/lesson-01.mp4",
-      "metadata": {"course": "Course"},
-      "segments": [
-        {
-          "ordinal": 0,
-          "start_ms": 0,
-          "end_ms": 45000,
-          "transcript": "Spoken evidence here.",
-          "visual_caption": "A coordinate grid shows two vectors and a transformation matrix.",
-          "frame_paths": [".longvideo/artifacts/lesson-01/000000/frame-001.jpg"],
-          "visual_embedding": [0.12, -0.04, 0.18],
-          "metadata": {"extraction": {"visual_captioner": "ollama-vision:granite3.2-vision:2b"}}
-        }
-      ]
-    }
-  ]
-}
-```
-
-Manifests can also be ingested directly:
-
-```powershell
-.\.venv\Scripts\longvideo-rag.exe --db .\.longvideo\demo.sqlite3 ingest .\examples\course_manifest.json
+tests/
+  test_extraction.py
+  test_qa.py
+  test_retrieval.py
+  test_web.py
 ```
 
 ## Testing
 
-```powershell
-$env:PYTHONPATH = "src"
-.\.venv\Scripts\python.exe -m unittest discover -s tests -v
-.\.venv\Scripts\python.exe -m pip check
+The tests are deliberately local and do not require a hosted model API.
+
+```bash
+python -m unittest discover -s tests -v
+python -m pip check
 ```
 
-The tests create short local MP4 fixtures with `ffmpeg`, validate audio/frame extraction,
-multimodal retrieval, grounded answer behavior, caption enrichment/resume handling, and the web
-application routes.
+The suite exercises short generated MP4 fixtures, extraction, retrieval, grounded-answer behavior, caption enrichment/resume handling, and web routes.
+
+## Design limitations
+
+- Retrieval quality is not benchmarked against a large labelled video-QA corpus, so the current ranking choices should be treated as engineering heuristics rather than calibrated optimal weights.
+- CLIP frame embeddings and precomputed vision captions are useful but lossy representations of visual content.
+- The system currently uses segment-level retrieval rather than a learned hierarchical index.
+- Local model quality and latency depend heavily on the selected Ollama/Whisper/vision models and hardware.
+- The project is inspired by the multimodal retrieval problem addressed by VideoRAG but intentionally implements a smaller, inspectable architecture rather than claiming paper-level feature parity.
+
+## Possible next steps
+
+The most useful extensions would be an explicit retrieval benchmark, learned reranking over the existing evidence channels, query-aware temporal expansion, and evaluation of retrieval/answer quality as the collection scales to much longer multi-video corpora.
